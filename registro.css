@@ -1,0 +1,67 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(to right, #ff4e50, #f9d423);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.register-box {
+    width: 700px;
+    display: flex;
+    border-radius: 15px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 0 15px rgba(0,0,0,0.2);
+}
+
+.info-panel {
+    background: #fff0f0;
+    width: 50%;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.info-panel h1 { margin: 0; color: #c62828; }
+.info-panel p { margin-top: 20px; }
+
+.form-panel {
+    width: 50%;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.form-panel h2 { margin-bottom: 20px; }
+
+input, select {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+}
+
+button {
+    width: 100%;
+    padding: 10px;
+    background: #ff4e50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+button:hover { background: #f9d423; }
+
+.error { color: red; margin-bottom: 10px; }
+.success { color: green; margin-bottom: 10px; }
+
+.form-panel p { font-size: 12px; }
+.form-panel a { color: #ff4e50; text-decoration: none; }

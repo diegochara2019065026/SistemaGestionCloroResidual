@@ -1,0 +1,88 @@
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    display: flex;
+    height: 100vh;
+    background: #f0f2f5;
+}
+
+.sidebar {
+    width: 220px;
+    background: #fff;
+    border-right: 1px solid #ddd;
+    padding: 20px;
+}
+
+.sidebar .logo h2 {
+    margin: 0;
+    color: #c62828;
+}
+
+.sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin-top: 20px;
+}
+
+.sidebar ul li {
+    margin-bottom: 10px;
+}
+
+.sidebar ul li a {
+    text-decoration: none;
+    color: #333;
+    padding: 8px;
+    display: block;
+    border-radius: 5px;
+}
+
+.sidebar ul li a:hover {
+    background: #c62828;
+    color: #fff;
+}
+
+.main {
+    flex: 1;
+    padding: 20px;
+}
+
+header {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 20px;
+    background: #fff;
+    padding: 10px 20px;
+    border-radius: 5px;
+}
+
+.user-info span {
+    margin-left: 10px;
+}
+
+.content {
+    background: #fff;
+    padding: 20px;
+    border-radius: 10px;
+}
+
+.menu ul.submenu {
+    list-style: none;
+    padding-left: 15px;
+    display: none;
+}
+
+.menu ul.submenu.open {
+    display: block;
+}
+
+.menu ul.submenu li a {
+    font-size: 14px;
+    color: #555;
+    text-decoration: none;
+    display: block;
+    padding: 5px 0;
+}
+
+.menu ul.submenu li a:hover {
+    color: #c62828;
+}
