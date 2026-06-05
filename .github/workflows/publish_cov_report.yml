@@ -1,0 +1,65 @@
+name: Publish Coverage Report
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "MyMath/**"
+      - ".github/workflows/publish_cov_report.yml"
+  pull_request:
+    paths:
+      - "MyMath/**"
+      - ".github/workflows/publish_cov_report.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore solution
+        working-directory: MyMath
+        run: dotnet restore
+
+      - name: Build solution
+        working-directory: MyMath
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Run tests with coverage
+        working-directory: MyMath
+        run: dotnet test --configuration Release --no-build --collect:"XPlat Code Coverage"
+
+      - name: Install ReportGenerator
+        run: dotnet tool update -g dotnet-reportgenerator-globaltool
+
+      - name: Generate HTML coverage report
+        working-directory: MyMath
+        run: reportgenerator "-reports:./Math.Tests/TestResults/**/coverage.cobertura.xml" "-targetdir:Cobertura" "-reporttypes:Html"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: MyMath/Cobertura
+
+      - name: Publish coverage to GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: MyMath/Cobertura
+          destination_dir: coverage
+          keep_files: true

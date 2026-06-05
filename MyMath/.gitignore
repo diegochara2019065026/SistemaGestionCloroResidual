@@ -1,0 +1,7 @@
+bin/
+obj/
+TestResults/
+Cobertura/
+docs/_site/
+docs/api/
+artifacts/
