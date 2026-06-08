@@ -38,6 +38,14 @@ namespace Math.Tests
         }
 
         [TestMethod]
+        public void RooterTestZeroInput()
+        {
+            Rooter rooter = new();
+
+            Assert.ThrowsException<System.ArgumentOutOfRangeException>(() => rooter.SquareRoot(0));
+        }
+
+        [TestMethod]
         public void RooterTestNegativeInputWithMessage()
         {
             Rooter rooter = new();

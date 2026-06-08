@@ -1,35 +1,39 @@
 <?php
 session_start();
 require 'conexion.php';
+require 'includes/helpers.php';
 
 $error = '';
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $correo = $_POST['correo'];
-    $contrasena = $_POST['contrasena'];
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $correo = trim($_POST['correo'] ?? '');
+    $contrasena = $_POST['contrasena'] ?? '';
 
-    $sql = "SELECT u.id, u.nombre, u.contrasena, r.nombre_rol 
-            FROM usuarios u
-            INNER JOIN roles r ON u.rol_id = r.id
-            WHERE u.correo = ?";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("s", $correo);
-    $stmt->execute();
-    $resultado = $stmt->get_result();
-    $usuario = $resultado->fetch_assoc();
-
-     // Verificar contraseña usando password_verify()
-   if ($usuario && password_verify($contrasena, $usuario['contrasena'])) {
-        $_SESSION['id'] = $usuario['id'];
-        $_SESSION['nombre'] = $usuario['nombre'];
-        $_SESSION['rol'] = $usuario['nombre_rol'];
-
-
-        // Redirigir al dashboard general
-        header("Location: dashboard.php");
-        exit();
+    if (!filter_var($correo, FILTER_VALIDATE_EMAIL) || $contrasena === '') {
+        $error = "Ingresa un correo y contraseña válidos.";
     } else {
-        $error = "Usuario o contraseña incorrectos";
+        $sql = "SELECT u.id, u.nombre, u.contrasena, r.nombre_rol
+                FROM usuarios u
+                INNER JOIN roles r ON u.rol_id = r.id
+                WHERE u.correo = ?";
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("s", $correo);
+        $stmt->execute();
+        $resultado = $stmt->get_result();
+        $usuario = $resultado->fetch_assoc();
+
+        if ($usuario && password_verify($contrasena, $usuario['contrasena'])) {
+            session_regenerate_id(true);
+
+            $_SESSION['id'] = $usuario['id'];
+            $_SESSION['nombre'] = $usuario['nombre'];
+            $_SESSION['rol'] = $usuario['nombre_rol'];
+
+            header("Location: dashboard.php");
+            exit();
+        }
+
+        $error = "Usuario o contraseña incorrectos.";
     }
 }
 ?>
@@ -45,7 +49,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <div class="login-box">
     <div class="login-left">
         <h1>DATASS</h1>
-        <p>Diagnóstico Sobre Abastecimiento De Agua y Saneamiento en el Ámbito Rural</p>
+        <p>Diagnóstico sobre abastecimiento de agua y saneamiento en el ámbito rural</p>
     </div>
     <div class="login-right">
         <h2>Acceso al Sistema</h2>
@@ -54,7 +58,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <input type="password" name="contrasena" placeholder="Contraseña" required><br>
             <button type="submit">Iniciar</button>
         </form>
-        <?php if($error) echo "<div class='error'>$error</div>"; ?>
+        <?php if ($error): ?>
+            <div class="error"><?php echo e($error); ?></div>
+        <?php endif; ?>
         <div class="login-footer">
             ¿Necesitas una cuenta? <a href="#">Solicitar aquí</a>
         </div>
