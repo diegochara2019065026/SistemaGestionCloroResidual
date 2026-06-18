@@ -12,6 +12,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error = "La solicitud no es válida. Recarga la página e intenta nuevamente.";
     } else {
+        $accion = $_POST['accion'] ?? 'programar';
         $solicitud_id = (int) ($_POST['solicitud_id'] ?? 0);
         $fecha_programada = $_POST['fecha_programada'] ?? '';
         $hora_programada = $_POST['hora_programada'] ?? '';
@@ -19,16 +20,59 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $observaciones = trim($_POST['observaciones'] ?? '');
         $tecnico_asignado = (int) $_SESSION['id'];
 
-        if ($solicitud_id <= 0 || $fecha_programada === '' || $hora_programada === '') {
+        if ($accion === 'atender') {
+            $programacion_id = (int) ($_POST['programacion_id'] ?? 0);
+
+            if ($programacion_id <= 0 || $solicitud_id <= 0) {
+                $error = "Selecciona una cita valida para gestionar.";
+            } else {
+                $stmtProgramacion = $conn->prepare("
+                    SELECT id
+                    FROM programacion_asistencia
+                    WHERE id = ? AND solicitud_id = ?
+                ");
+                $stmtProgramacion->bind_param("ii", $programacion_id, $solicitud_id);
+                $stmtProgramacion->execute();
+                $programacionExiste = $stmtProgramacion->get_result()->num_rows > 0;
+
+                if (!$programacionExiste) {
+                    $error = "La cita seleccionada no existe.";
+                } else {
+                    $conn->begin_transaction();
+
+                    try {
+                        $stmt = $conn->prepare("UPDATE programacion_asistencia SET estado = 'Finalizada' WHERE id = ?");
+                        $stmt->bind_param("i", $programacion_id);
+                        $stmt->execute();
+
+                        $stmtUpdate = $conn->prepare("
+                            UPDATE solicitudes_asistencia
+                            SET estado = 'Atendida', tecnico_asignado = ?, fecha_atencion = CURDATE()
+                            WHERE id = ?
+                        ");
+                        $stmtUpdate->bind_param("ii", $tecnico_asignado, $solicitud_id);
+                        $stmtUpdate->execute();
+
+                        $conn->commit();
+                        $success = "Cita gestionada correctamente. La solicitud fue marcada como atendida.";
+                    } catch (Throwable $e) {
+                        $conn->rollback();
+                        $error = "No se pudo gestionar la cita.";
+                    }
+                }
+            }
+        }
+
+        if ($accion !== 'atender' && ($solicitud_id <= 0 || $fecha_programada === '' || $hora_programada === '')) {
             $error = "Selecciona una solicitud e ingresa fecha y hora de programación.";
-        } else {
-            $stmtSolicitud = $conn->prepare("SELECT id FROM solicitudes_asistencia WHERE id = ?");
+        } elseif ($accion !== 'atender') {
+            $stmtSolicitud = $conn->prepare("SELECT id FROM solicitudes_asistencia WHERE id = ? AND estado = 'Pendiente'");
             $stmtSolicitud->bind_param("i", $solicitud_id);
             $stmtSolicitud->execute();
             $solicitudExiste = $stmtSolicitud->get_result()->num_rows > 0;
 
             if (!$solicitudExiste) {
-                $error = "La solicitud seleccionada no existe.";
+                $error = "La solicitud seleccionada no existe o ya fue programada.";
             } else {
                 $conn->begin_transaction();
 
@@ -163,9 +207,10 @@ th { background: #f5f5f5; }
                         <td><?php echo e($row['motivo']); ?><br><small><?php echo e($row['descripcion']); ?></small></td>
                         <td class="status"><?php echo e($row['estado']); ?></td>
                         <td>
-                            <?php if ($row['estado'] !== 'Atendida'): ?>
+                            <?php if ($row['estado'] === 'Pendiente'): ?>
                                 <form class="schedule-form" method="post">
                                     <input type="hidden" name="csrf_token" value="<?php echo e(csrf_token()); ?>">
+                                    <input type="hidden" name="accion" value="programar">
                                     <input type="hidden" name="solicitud_id" value="<?php echo e($row['id']); ?>">
                                     <input type="date" name="fecha_programada" value="<?php echo e($row['fecha_atencion'] ?? ''); ?>" required>
                                     <input type="time" name="hora_programada" required>
@@ -173,6 +218,8 @@ th { background: #f5f5f5; }
                                     <textarea name="observaciones" placeholder="Observaciones para la atención"></textarea>
                                     <button type="submit">Aceptar y agendar</button>
                                 </form>
+                            <?php elseif ($row['estado'] === 'En Proceso'): ?>
+                                Cita programada
                             <?php else: ?>
                                 Atendida
                             <?php endif; ?>
@@ -193,11 +240,12 @@ th { background: #f5f5f5; }
                     <th>Técnico</th>
                     <th>Estado</th>
                     <th>Zona</th>
+                    <th>Acciones</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if ($programaciones->num_rows === 0): ?>
-                    <tr><td colspan="7">No hay programaciones registradas.</td></tr>
+                    <tr><td colspan="8">No hay programaciones registradas.</td></tr>
                 <?php endif; ?>
                 <?php while ($row = $programaciones->fetch_assoc()): ?>
                     <tr>
@@ -208,6 +256,19 @@ th { background: #f5f5f5; }
                         <td><?php echo e($row['tecnico']); ?></td>
                         <td><?php echo e($row['estado']); ?></td>
                         <td><?php echo e($row['zona_localizacion']); ?></td>
+                        <td>
+                            <?php if ($row['estado'] !== 'Finalizada'): ?>
+                                <form method="post" onsubmit="return confirm('Marcar esta cita como atendida?');">
+                                    <input type="hidden" name="csrf_token" value="<?php echo e(csrf_token()); ?>">
+                                    <input type="hidden" name="accion" value="atender">
+                                    <input type="hidden" name="programacion_id" value="<?php echo e($row['id']); ?>">
+                                    <input type="hidden" name="solicitud_id" value="<?php echo e($row['solicitud_id']); ?>">
+                                    <button type="submit">Gestionar cita</button>
+                                </form>
+                            <?php else: ?>
+                                Gestionada
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endwhile; ?>
             </tbody>

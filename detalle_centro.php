@@ -5,6 +5,24 @@ require 'includes/helpers.php';
 
 require_login();
 
+$conn->query("
+    CREATE TABLE IF NOT EXISTS ficha_adjuntos (
+        id INT NOT NULL AUTO_INCREMENT,
+        ficha_id INT NOT NULL,
+        archivo VARCHAR(255) NOT NULL,
+        nombre_original VARCHAR(255) NOT NULL,
+        tipo_mime VARCHAR(100) DEFAULT NULL,
+        tamano INT DEFAULT 0,
+        categoria VARCHAR(80) DEFAULT NULL,
+        fecha_creacion TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_ficha_adjuntos_ficha (ficha_id),
+        CONSTRAINT fk_ficha_adjuntos_ficha
+            FOREIGN KEY (ficha_id) REFERENCES ficha_tecnica (id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
 $id = (int) ($_GET['id'] ?? 0);
 
 $stmt = $conn->prepare("SELECT id, nombre, distrito, provincia, departamento FROM centros_poblados WHERE id = ?");
@@ -34,10 +52,17 @@ $stmtSistemas->execute();
 $sistemas = $stmtSistemas->get_result();
 
 $stmtFichas = $conn->prepare("
-    SELECT id, fecha_registro, municipalidad, jass, cloro_residual_mgL, usuario_nombre, pdf_archivo
-    FROM ficha_tecnica
-    WHERE centro_poblado_id = ? OR localidad_anexo = ?
-    ORDER BY fecha_registro DESC, id DESC
+    SELECT f.id, f.fecha_registro, f.municipalidad, f.jass, f.cloro_residual_mgL, f.usuario_nombre, f.pdf_archivo,
+           (
+               SELECT a.archivo
+               FROM ficha_adjuntos a
+               WHERE a.ficha_id = f.id
+               ORDER BY FIELD(a.categoria, 'Formato monitoreo cloro residual', 'Evidencia fotografica') ASC, a.id DESC
+               LIMIT 1
+           ) AS adjunto_archivo
+    FROM ficha_tecnica f
+    WHERE f.centro_poblado_id = ? OR f.localidad_anexo = ?
+    ORDER BY f.fecha_registro DESC, f.id DESC
 ");
 $stmtFichas->bind_param("is", $id, $centro['nombre']);
 $stmtFichas->execute();
@@ -125,7 +150,15 @@ th { background: #f5f5f5; }
                         <td><?php echo e($row['jass']); ?></td>
                         <td><?php echo e($row['cloro_residual_mgL']); ?></td>
                         <td><?php echo e($row['usuario_nombre']); ?></td>
-                        <td><?php echo $row['pdf_archivo'] ? '<a href="uploads/fichas/' . e($row['pdf_archivo']) . '" target="_blank">Ver PDF</a>' : 'Sin PDF'; ?></td>
+                        <td>
+                            <?php if (!empty($row['adjunto_archivo'])): ?>
+                                <a href="uploads/fichas/adjuntos/<?php echo e($row['adjunto_archivo']); ?>" target="_blank">Vista previa</a>
+                            <?php elseif (!empty($row['pdf_archivo'])): ?>
+                                <a href="uploads/fichas/<?php echo e($row['pdf_archivo']); ?>" target="_blank">Ver PDF</a>
+                            <?php else: ?>
+                                Sin PDF
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endwhile; ?>
             </tbody>

@@ -8,6 +8,21 @@ require_any_role(['Administrador', 'Municipalidad']);
 $error = '';
 $success = '';
 
+$conn->query("
+    CREATE TABLE IF NOT EXISTS usuario_centros_poblados (
+        usuario_id INT NOT NULL,
+        centro_poblado_id INT NOT NULL,
+        PRIMARY KEY (usuario_id, centro_poblado_id),
+        KEY idx_usuario_centros_centro (centro_poblado_id),
+        CONSTRAINT fk_usuario_centros_usuario
+            FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+        CONSTRAINT fk_usuario_centros_centro
+            FOREIGN KEY (centro_poblado_id) REFERENCES centros_poblados (id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
         $error = "La solicitud no es válida. Recarga la página e intenta nuevamente.";
@@ -21,8 +36,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         if ($centro_poblado_id <= 0 || $motivo === '') {
             $error = "Selecciona un centro poblado e ingresa el motivo de la asistencia.";
         } else {
-            $stmtCentro = $conn->prepare("SELECT id FROM centros_poblados WHERE id = ?");
-            $stmtCentro->bind_param("i", $centro_poblado_id);
+            if (has_role('Municipalidad')) {
+                $stmtCentro = $conn->prepare("
+                    SELECT c.id
+                    FROM centros_poblados c
+                    INNER JOIN usuario_centros_poblados ucp ON ucp.centro_poblado_id = c.id
+                    WHERE c.id = ? AND ucp.usuario_id = ?
+                ");
+                $stmtCentro->bind_param("ii", $centro_poblado_id, $usuario_id);
+            } else {
+                $stmtCentro = $conn->prepare("SELECT id FROM centros_poblados WHERE id = ?");
+                $stmtCentro->bind_param("i", $centro_poblado_id);
+            }
             $stmtCentro->execute();
             $centroExiste = $stmtCentro->get_result()->num_rows > 0;
 
@@ -46,9 +71,22 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     }
 }
 
-$centros = $conn->query("SELECT id, nombre, distrito, provincia, departamento FROM centros_poblados ORDER BY nombre");
-
 $usuario_id = (int) $_SESSION['id'];
+if (has_role('Municipalidad')) {
+    $stmtCentros = $conn->prepare("
+        SELECT c.id, c.nombre, c.distrito, c.provincia, c.departamento
+        FROM centros_poblados c
+        INNER JOIN usuario_centros_poblados ucp ON ucp.centro_poblado_id = c.id
+        WHERE ucp.usuario_id = ?
+        ORDER BY c.nombre
+    ");
+    $stmtCentros->bind_param("i", $usuario_id);
+    $stmtCentros->execute();
+    $centros = $stmtCentros->get_result();
+} else {
+    $centros = $conn->query("SELECT id, nombre, distrito, provincia, departamento FROM centros_poblados ORDER BY nombre");
+}
+
 if (has_role('Administrador')) {
     $solicitudes = $conn->query("
         SELECT s.id, s.fecha_solicitud, s.motivo, s.estado, s.fecha_atencion,

@@ -5,6 +5,12 @@ require 'includes/helpers.php';
 
 $error = '';
 
+$columnaMunicipalidad = $conn->query("SHOW COLUMNS FROM usuarios LIKE 'municipalidad_id'");
+if ($columnaMunicipalidad && $columnaMunicipalidad->num_rows === 0) {
+    $conn->query("ALTER TABLE usuarios ADD COLUMN municipalidad_id INT NULL AFTER rol_id");
+    $conn->query("ALTER TABLE usuarios ADD INDEX idx_usuarios_municipalidad_id (municipalidad_id)");
+}
+
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $correo = trim($_POST['correo'] ?? '');
     $contrasena = $_POST['contrasena'] ?? '';
@@ -12,10 +18,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (!filter_var($correo, FILTER_VALIDATE_EMAIL) || $contrasena === '') {
         $error = "Ingresa un correo y contraseña válidos.";
     } else {
-        $sql = "SELECT u.id, u.nombre, u.contrasena, r.nombre_rol
+        $sql = "SELECT u.id, u.nombre, u.contrasena, u.municipalidad_id, r.nombre_rol
                 FROM usuarios u
                 INNER JOIN roles r ON u.rol_id = r.id
-                WHERE u.correo = ?";
+                WHERE u.correo = ? AND u.estado = 1";
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("s", $correo);
         $stmt->execute();
@@ -28,6 +34,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $_SESSION['id'] = $usuario['id'];
             $_SESSION['nombre'] = $usuario['nombre'];
             $_SESSION['rol'] = $usuario['nombre_rol'];
+            $_SESSION['municipalidad_id'] = $usuario['municipalidad_id'];
 
             header("Location: dashboard.php");
             exit();

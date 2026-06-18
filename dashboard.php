@@ -5,6 +5,24 @@ require 'includes/helpers.php';
 
 require_login();
 
+$conn->query("
+    CREATE TABLE IF NOT EXISTS ficha_adjuntos (
+        id INT NOT NULL AUTO_INCREMENT,
+        ficha_id INT NOT NULL,
+        archivo VARCHAR(255) NOT NULL,
+        nombre_original VARCHAR(255) NOT NULL,
+        tipo_mime VARCHAR(100) DEFAULT NULL,
+        tamano INT DEFAULT 0,
+        categoria VARCHAR(80) DEFAULT NULL,
+        fecha_creacion TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        KEY idx_ficha_adjuntos_ficha (ficha_id),
+        CONSTRAINT fk_ficha_adjuntos_ficha
+            FOREIGN KEY (ficha_id) REFERENCES ficha_tecnica (id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+");
+
 $stats = [
     'centros' => (int) $conn->query("SELECT COUNT(*) AS total FROM centros_poblados")->fetch_assoc()['total'],
     'municipalidades' => (int) $conn->query("SELECT COUNT(*) AS total FROM municipalidades")->fetch_assoc()['total'],
@@ -22,10 +40,33 @@ $jass = $conn->query("
 ");
 $fichas = $conn->query("
     SELECT f.id, COALESCE(c.nombre, f.localidad_anexo) AS centro_poblado, f.fecha_registro,
-           f.cloro_residual_mgL, f.usuario_nombre
+           f.cloro_residual_mgL, f.usuario_nombre, f.pdf_archivo,
+           (
+               SELECT a.archivo
+               FROM ficha_adjuntos a
+               WHERE a.ficha_id = f.id
+               ORDER BY FIELD(a.categoria, 'Formato monitoreo cloro residual', 'Evidencia fotografica') ASC, a.id DESC
+               LIMIT 1
+           ) AS adjunto_archivo
     FROM ficha_tecnica f
     LEFT JOIN centros_poblados c ON f.centro_poblado_id = c.id
     ORDER BY f.fecha_registro DESC
+");
+$alertasCloroTotal = (int) $conn->query("
+    SELECT COUNT(*) AS total
+    FROM ficha_tecnica
+    WHERE cloro_residual_mgL IS NOT NULL
+      AND cloro_residual_mgL < 0.50
+")->fetch_assoc()['total'];
+$alertasCloro = $conn->query("
+    SELECT f.id, COALESCE(c.nombre, f.localidad_anexo, 'Sin centro poblado') AS centro_poblado,
+           f.fecha_registro, f.cloro_residual_mgL, f.usuario_nombre
+    FROM ficha_tecnica f
+    LEFT JOIN centros_poblados c ON f.centro_poblado_id = c.id
+    WHERE f.cloro_residual_mgL IS NOT NULL
+      AND f.cloro_residual_mgL < 0.50
+    ORDER BY f.fecha_registro DESC, f.id DESC
+    LIMIT 8
 ");
 ?>
 
@@ -54,6 +95,16 @@ $fichas = $conn->query("
 .search { margin-bottom: 14px; padding: 10px 12px; width: 50%; min-width: 240px; border: 1px solid #ccc; border-radius: 6px; }
 .action-link { display: inline-block; padding: 7px 10px; border-radius: 5px; background: #c62828; color: #fff; text-decoration: none; font-size: 13px; }
 .empty-row { color: #777; text-align: center; }
+.chlorine-alert { border: 1px solid #ffc6c6; background: #fff4f4; border-left: 5px solid #c62828; border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
+.chlorine-alert-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.chlorine-alert-title { margin: 0; color: #9f1f1f; font-size: 18px; }
+.chlorine-alert-count { background: #c62828; color: #fff; border-radius: 999px; padding: 5px 10px; font-size: 13px; font-weight: bold; white-space: nowrap; }
+.chlorine-alert p { margin: 0 0 12px; color: #6d3333; }
+.chlorine-alert table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; }
+.chlorine-alert th, .chlorine-alert td { padding: 9px 10px; border-bottom: 1px solid #f0d3d3; text-align: left; }
+.chlorine-alert th { color: #6d3333; font-size: 12px; text-transform: uppercase; background: #ffe9e9; }
+.chlorine-low-row td { background: #fff7f7; }
+.chlorine-badge { display: inline-block; min-width: 54px; padding: 4px 8px; border-radius: 999px; background: #c62828; color: #fff; font-weight: bold; text-align: center; }
 @media (max-width: 1100px) { .stats-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); } }
 </style>
 </head>
@@ -114,6 +165,27 @@ $fichas = $conn->query("
             <p>Resumen operativo del sistema de agua, saneamiento y cloración.</p>
         </div>
 
+        <?php if ($alertasCloroTotal > 0): ?>
+        <div class="chlorine-alert">
+            <div class="chlorine-alert-header">
+                <h3 class="chlorine-alert-title">Alerta de cloro residual bajo</h3>
+                <span class="chlorine-alert-count"><?php echo e($alertasCloroTotal); ?> alerta(s)</span>
+            </div>
+            <p>Se encontraron centros poblados con mediciones menores a 0.50 mg/L de cloro residual.</p>
+            <table>
+                <tr><th>Centro poblado</th><th>Fecha</th><th>Cloro mg/L</th><th>Usuario</th></tr>
+                <?php while ($alerta = $alertasCloro->fetch_assoc()): ?>
+                <tr>
+                    <td><?php echo e($alerta['centro_poblado']); ?></td>
+                    <td><?php echo e($alerta['fecha_registro']); ?></td>
+                    <td><span class="chlorine-badge"><?php echo e($alerta['cloro_residual_mgL']); ?></span></td>
+                    <td><?php echo e($alerta['usuario_nombre']); ?></td>
+                </tr>
+                <?php endwhile; ?>
+            </table>
+        </div>
+        <?php endif; ?>
+
         <div class="stats-grid">
             <div class="stat-card"><strong><?php echo e($stats['centros']); ?></strong><span>Centros poblados</span></div>
             <div class="stat-card"><strong><?php echo e($stats['municipalidades']); ?></strong><span>Municipalidades</span></div>
@@ -168,17 +240,32 @@ $fichas = $conn->query("
         <div id="modulo3" class="tabcontent">
             <input class="search" type="text" id="search3" onkeyup="searchTable('table3','search3')" placeholder="Buscar ficha de cloración...">
             <table id="table3">
-                <tr><th>ID</th><th>Centro Poblado</th><th>Fecha Registro</th><th>Cloro Residual mg/L</th><th>Usuario</th></tr>
+                <tr><th>ID</th><th>Centro Poblado</th><th>Fecha Registro</th><th>Cloro Residual mg/L</th><th>Usuario</th><th>Vista previa</th></tr>
                 <?php if ($fichas->num_rows === 0): ?>
-                    <tr><td class="empty-row" colspan="5">No hay fichas de cloración registradas.</td></tr>
+                    <tr><td class="empty-row" colspan="6">No hay fichas de cloración registradas.</td></tr>
                 <?php endif; ?>
                 <?php while ($row = $fichas->fetch_assoc()): ?>
-                <tr>
+                <tr class="<?php echo ($row['cloro_residual_mgL'] !== null && (float) $row['cloro_residual_mgL'] < 0.50) ? 'chlorine-low-row' : ''; ?>">
                     <td><?php echo e($row['id']); ?></td>
                     <td><?php echo e($row['centro_poblado']); ?></td>
                     <td><?php echo e($row['fecha_registro']); ?></td>
-                    <td><?php echo e($row['cloro_residual_mgL']); ?></td>
+                    <td>
+                        <?php if ($row['cloro_residual_mgL'] !== null && (float) $row['cloro_residual_mgL'] < 0.50): ?>
+                            <span class="chlorine-badge"><?php echo e($row['cloro_residual_mgL']); ?></span>
+                        <?php else: ?>
+                            <?php echo e($row['cloro_residual_mgL']); ?>
+                        <?php endif; ?>
+                    </td>
                     <td><?php echo e($row['usuario_nombre']); ?></td>
+                    <td>
+                        <?php if (!empty($row['adjunto_archivo'])): ?>
+                            <a class="action-link" href="uploads/fichas/adjuntos/<?php echo e($row['adjunto_archivo']); ?>" target="_blank">Vista previa</a>
+                        <?php elseif (!empty($row['pdf_archivo'])): ?>
+                            <a class="action-link" href="uploads/fichas/<?php echo e($row['pdf_archivo']); ?>" target="_blank">Ver PDF</a>
+                        <?php else: ?>
+                            Sin archivo
+                        <?php endif; ?>
+                    </td>
                 </tr>
                 <?php endwhile; ?>
             </table>

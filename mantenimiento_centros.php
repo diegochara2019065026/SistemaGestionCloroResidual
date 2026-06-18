@@ -3,29 +3,41 @@ session_start();
 require 'conexion.php';
 require 'includes/helpers.php';
 
-require_login();
+require_admin();
 
 $error = '';
 $success = '';
 $editando = null;
 $busqueda = trim($_GET['buscar'] ?? '');
+$filtroDistrito = (int) ($_GET['distrito_id'] ?? 0);
 $accion = $_POST['accion'] ?? '';
+
+function distrito_por_id($conn, $id) {
+    $stmt = $conn->prepare("SELECT id, nombre, provincia, departamento FROM distritos WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_assoc();
+}
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
-        $error = "La solicitud no es válida. Recarga la página e intenta nuevamente.";
+        $error = "La solicitud no es valida. Recarga la pagina e intenta nuevamente.";
     } elseif ($accion === 'crear' || $accion === 'actualizar') {
         $id = (int) ($_POST['id'] ?? 0);
         $nombre = trim($_POST['nombre'] ?? '');
-        $distrito = trim($_POST['distrito'] ?? '');
-        $provincia = trim($_POST['provincia'] ?? '');
-        $departamento = trim($_POST['departamento'] ?? '');
+        $distritoId = (int) ($_POST['distrito_id'] ?? 0);
+        $distrito = $distritoId > 0 ? distrito_por_id($conn, $distritoId) : null;
 
         if ($nombre === '') {
             $error = "El nombre del centro poblado es obligatorio.";
+        } elseif (!$distrito) {
+            $error = "Selecciona un distrito valido.";
         } elseif ($accion === 'crear') {
-            $stmt = $conn->prepare("INSERT INTO centros_poblados (nombre, distrito, provincia, departamento) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("ssss", $nombre, $distrito, $provincia, $departamento);
+            $stmt = $conn->prepare("
+                INSERT INTO centros_poblados (nombre, distrito_id, distrito, provincia, departamento)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $stmt->bind_param("sisss", $nombre, $distrito['id'], $distrito['nombre'], $distrito['provincia'], $distrito['departamento']);
 
             if ($stmt->execute()) {
                 $success = "Centro poblado registrado correctamente.";
@@ -34,10 +46,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             }
         } else {
             if ($id <= 0) {
-                $error = "Selecciona un centro poblado válido para actualizar.";
+                $error = "Selecciona un centro poblado valido para actualizar.";
             } else {
-                $stmt = $conn->prepare("UPDATE centros_poblados SET nombre = ?, distrito = ?, provincia = ?, departamento = ? WHERE id = ?");
-                $stmt->bind_param("ssssi", $nombre, $distrito, $provincia, $departamento, $id);
+                $stmt = $conn->prepare("
+                    UPDATE centros_poblados
+                    SET nombre = ?, distrito_id = ?, distrito = ?, provincia = ?, departamento = ?
+                    WHERE id = ?
+                ");
+                $stmt->bind_param("sisssi", $nombre, $distrito['id'], $distrito['nombre'], $distrito['provincia'], $distrito['departamento'], $id);
 
                 if ($stmt->execute()) {
                     $success = "Centro poblado actualizado correctamente.";
@@ -50,7 +66,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $id = (int) ($_POST['id'] ?? 0);
 
         if ($id <= 0) {
-            $error = "Selecciona un centro poblado válido para eliminar.";
+            $error = "Selecciona un centro poblado valido para eliminar.";
         } else {
             $stmt = $conn->prepare("DELETE FROM centros_poblados WHERE id = ?");
             $stmt->bind_param("i", $id);
@@ -58,7 +74,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             if ($stmt->execute()) {
                 $success = "Centro poblado eliminado correctamente.";
             } else {
-                $error = "No se pudo eliminar el centro poblado.";
+                $error = "No se pudo eliminar el centro poblado. Revisa si tiene JASS, sistemas, fichas o solicitudes vinculadas.";
             }
         }
     }
@@ -66,29 +82,68 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
 if (isset($_GET['editar'])) {
     $idEditar = (int) $_GET['editar'];
-    $stmt = $conn->prepare("SELECT id, nombre, distrito, provincia, departamento FROM centros_poblados WHERE id = ?");
+    $stmt = $conn->prepare("
+        SELECT c.id, c.nombre, c.distrito_id, c.distrito, c.provincia, c.departamento
+        FROM centros_poblados c
+        WHERE c.id = ?
+    ");
     $stmt->bind_param("i", $idEditar);
     $stmt->execute();
     $editando = $stmt->get_result()->fetch_assoc();
 
     if (!$editando) {
-        $error = "No se encontró el centro poblado seleccionado.";
+        $error = "No se encontro el centro poblado seleccionado.";
     }
 }
 
+$distritos = $conn->query("
+    SELECT d.id, d.nombre, d.provincia, d.departamento, COUNT(c.id) AS total_centros
+    FROM distritos d
+    LEFT JOIN centros_poblados c ON c.distrito_id = d.id
+    GROUP BY d.id, d.nombre, d.provincia, d.departamento
+    ORDER BY d.departamento, d.provincia, d.nombre
+");
+
+$where = [];
+$types = '';
+$params = [];
+
 if ($busqueda !== '') {
     $like = '%' . $busqueda . '%';
-    $stmt = $conn->prepare("
-        SELECT id, nombre, distrito, provincia, departamento
-        FROM centros_poblados
-        WHERE nombre LIKE ? OR distrito LIKE ? OR provincia LIKE ? OR departamento LIKE ?
-        ORDER BY nombre
-    ");
-    $stmt->bind_param("ssss", $like, $like, $like, $like);
+    $where[] = "(c.nombre LIKE ? OR d.nombre LIKE ? OR d.provincia LIKE ? OR d.departamento LIKE ?)";
+    array_push($params, $like, $like, $like, $like);
+    $types .= 'ssss';
+}
+
+if ($filtroDistrito > 0) {
+    $where[] = "c.distrito_id = ?";
+    $params[] = $filtroDistrito;
+    $types .= 'i';
+}
+
+$sqlCentros = "
+    SELECT c.id, c.nombre, c.distrito_id,
+           COALESCE(d.nombre, c.distrito) AS distrito,
+           COALESCE(d.provincia, c.provincia) AS provincia,
+           COALESCE(d.departamento, c.departamento) AS departamento,
+           COUNT(*) OVER (PARTITION BY c.distrito_id) AS total_distrito
+    FROM centros_poblados c
+    LEFT JOIN distritos d ON c.distrito_id = d.id
+";
+
+if ($where) {
+    $sqlCentros .= " WHERE " . implode(" AND ", $where);
+}
+
+$sqlCentros .= " ORDER BY departamento, provincia, distrito, c.nombre";
+
+if ($params) {
+    $stmt = $conn->prepare($sqlCentros);
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $centros = $stmt->get_result();
 } else {
-    $centros = $conn->query("SELECT id, nombre, distrito, provincia, departamento FROM centros_poblados ORDER BY nombre");
+    $centros = $conn->query($sqlCentros);
 }
 ?>
 
@@ -100,28 +155,32 @@ if ($busqueda !== '') {
 <link rel="stylesheet" href="dashboard.css">
 <style>
 .toolbar { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 18px; }
-.toolbar form { display: flex; gap: 8px; align-items: center; }
-.toolbar input { min-width: 280px; padding: 8px; border: 1px solid #ccc; border-radius: 5px; }
+.filters { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px) auto auto; gap: 8px; align-items: center; }
+.filters input, .filters select { padding: 9px; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
 .button, button { padding: 9px 14px; border: none; border-radius: 5px; background: #c62828; color: #fff; cursor: pointer; text-decoration: none; font-size: 14px; }
 .button.secondary { background: #555; }
 .button.light { background: #eee; color: #333; }
-.form-grid { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.form-grid { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1fr); gap: 12px; margin-bottom: 18px; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 14px; color: #333; }
-.form-grid input { padding: 9px; border: 1px solid #ccc; border-radius: 5px; }
+.form-grid input, .form-grid select { padding: 9px; border: 1px solid #ccc; border-radius: 5px; }
 .form-actions { display: flex; gap: 8px; align-items: end; }
 .alert { padding: 10px 12px; border-radius: 5px; margin-bottom: 14px; }
 .alert.error { background: #fdecea; color: #b71c1c; }
 .alert.success { background: #e8f5e9; color: #1b5e20; }
+.district-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 10px 0 18px; }
+.district-chip { border: 1px solid #ddd; border-left: 4px solid #c62828; border-radius: 6px; background: #fff; padding: 10px; }
+.district-chip strong { display: block; color: #2f343b; }
+.district-chip span { display: block; color: #666; font-size: 12px; margin-top: 3px; }
 table { width: 100%; border-collapse: collapse; background: #fff; }
-th, td { padding: 9px; border: 1px solid #ddd; text-align: left; }
+th, td { padding: 9px; border: 1px solid #ddd; text-align: left; vertical-align: middle; }
 th { background: #f5f5f5; }
-.actions { display: flex; gap: 6px; }
+.group-row td { background: #eef2f6; color: #2f343b; font-weight: bold; }
+.muted { color: #666; font-size: 12px; font-weight: normal; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .delete-form { margin: 0; }
 @media (max-width: 900px) {
-    .form-grid { grid-template-columns: 1fr; }
     .toolbar { align-items: stretch; flex-direction: column; }
-    .toolbar form { align-items: stretch; flex-direction: column; }
-    .toolbar input { min-width: 0; }
+    .filters, .form-grid { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -140,10 +199,10 @@ th { background: #f5f5f5; }
                 <li><a href="mantenimiento_municipalidades.php">Municipalidades</a></li>
                 <li><a href="mantenimiento_jass.php">JASS</a></li>
                 <li><a href="mantenimiento_sistemas_agua.php">Sistemas de Agua</a></li>
-                <li><a href="mantenimiento_ficha.php">Ficha Cloración</a></li>
+                <li><a href="mantenimiento_ficha.php">Ficha Cloracion</a></li>
             </ul>
         </li>
-        <li><a href="logout.php">Cerrar sesión</a></li>
+        <li><a href="logout.php">Cerrar sesion</a></li>
     </ul>
 </div>
 
@@ -158,13 +217,33 @@ th { background: #f5f5f5; }
     <section class="content">
         <div class="toolbar">
             <h2>Centros Poblados</h2>
-            <form method="get">
-                <input type="text" name="buscar" value="<?php echo e($busqueda); ?>" placeholder="Buscar por nombre, distrito, provincia o departamento">
+            <form class="filters" method="get">
+                <input type="text" name="buscar" value="<?php echo e($busqueda); ?>" placeholder="Buscar centro poblado, distrito o provincia">
+                <select name="distrito_id">
+                    <option value="0">Todos los distritos</option>
+                    <?php mysqli_data_seek($distritos, 0); ?>
+                    <?php while ($d = $distritos->fetch_assoc()): ?>
+                        <option value="<?php echo e($d['id']); ?>" <?php echo $filtroDistrito === (int) $d['id'] ? 'selected' : ''; ?>>
+                            <?php echo e($d['nombre'] . ' - ' . $d['provincia']); ?>
+                        </option>
+                    <?php endwhile; ?>
+                </select>
                 <button type="submit">Buscar</button>
-                <?php if ($busqueda !== ''): ?>
+                <?php if ($busqueda !== '' || $filtroDistrito > 0): ?>
                     <a class="button light" href="mantenimiento_centros.php">Limpiar</a>
                 <?php endif; ?>
             </form>
+        </div>
+
+        <div class="district-summary">
+            <?php mysqli_data_seek($distritos, 0); ?>
+            <?php while ($d = $distritos->fetch_assoc()): ?>
+                <div class="district-chip">
+                    <strong><?php echo e($d['nombre']); ?></strong>
+                    <span><?php echo e($d['provincia'] . ', ' . $d['departamento']); ?></span>
+                    <span><?php echo e($d['total_centros']); ?> centro(s) poblado(s)</span>
+                </div>
+            <?php endwhile; ?>
         </div>
 
         <?php if ($error): ?>
@@ -181,27 +260,27 @@ th { background: #f5f5f5; }
 
             <div class="form-grid">
                 <label>
-                    Nombre
+                    Centro poblado
                     <input type="text" name="nombre" value="<?php echo e($editando['nombre'] ?? ''); ?>" required>
                 </label>
                 <label>
                     Distrito
-                    <input type="text" name="distrito" value="<?php echo e($editando['distrito'] ?? ''); ?>">
-                </label>
-                <label>
-                    Provincia
-                    <input type="text" name="provincia" value="<?php echo e($editando['provincia'] ?? ''); ?>">
-                </label>
-                <label>
-                    Departamento
-                    <input type="text" name="departamento" value="<?php echo e($editando['departamento'] ?? ''); ?>">
+                    <select name="distrito_id" required>
+                        <option value="">Seleccionar distrito</option>
+                        <?php mysqli_data_seek($distritos, 0); ?>
+                        <?php while ($d = $distritos->fetch_assoc()): ?>
+                            <option value="<?php echo e($d['id']); ?>" <?php echo (int) ($editando['distrito_id'] ?? 0) === (int) $d['id'] ? 'selected' : ''; ?>>
+                                <?php echo e($d['nombre'] . ' - ' . $d['provincia'] . ', ' . $d['departamento']); ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
                 </label>
             </div>
 
             <div class="form-actions">
                 <button type="submit"><?php echo $editando ? 'Actualizar' : 'Registrar'; ?></button>
                 <?php if ($editando): ?>
-                    <a class="button secondary" href="mantenimiento_centros.php">Cancelar edición</a>
+                    <a class="button secondary" href="mantenimiento_centros.php">Cancelar edicion</a>
                 <?php endif; ?>
             </div>
         </form>
@@ -212,8 +291,7 @@ th { background: #f5f5f5; }
             <thead>
                 <tr>
                     <th>ID</th>
-                    <th>Nombre</th>
-                    <th>Distrito</th>
+                    <th>Centro poblado</th>
                     <th>Provincia</th>
                     <th>Departamento</th>
                     <th>Acciones</th>
@@ -222,15 +300,30 @@ th { background: #f5f5f5; }
             <tbody>
                 <?php if ($centros->num_rows === 0): ?>
                     <tr>
-                        <td colspan="6">No hay centros poblados registrados.</td>
+                        <td colspan="5">No hay centros poblados registrados.</td>
                     </tr>
                 <?php endif; ?>
 
+                <?php $grupoActual = null; ?>
                 <?php while ($row = $centros->fetch_assoc()): ?>
+                    <?php
+                    $grupo = ($row['departamento'] ?? '') . '|' . ($row['provincia'] ?? '') . '|' . ($row['distrito'] ?? '');
+                    if ($grupo !== $grupoActual):
+                        $grupoActual = $grupo;
+                    ?>
+                        <tr class="group-row">
+                            <td colspan="5">
+                                Distrito: <?php echo e($row['distrito']); ?>
+                                <span class="muted">
+                                    <?php echo e($row['provincia'] . ', ' . $row['departamento']); ?> -
+                                    <?php echo e($row['total_distrito']); ?> centro(s)
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endif; ?>
                     <tr>
                         <td><?php echo e($row['id']); ?></td>
                         <td><?php echo e($row['nombre']); ?></td>
-                        <td><?php echo e($row['distrito']); ?></td>
                         <td><?php echo e($row['provincia']); ?></td>
                         <td><?php echo e($row['departamento']); ?></td>
                         <td>
@@ -238,7 +331,7 @@ th { background: #f5f5f5; }
                                 <a class="button light" href="detalle_centro.php?id=<?php echo e($row['id']); ?>">Ver detalle</a>
                                 <a class="button light" href="cuestionario_centro.php?id=<?php echo e($row['id']); ?>">Cuestionario</a>
                                 <a class="button light" href="mantenimiento_centros.php?editar=<?php echo e($row['id']); ?>">Editar</a>
-                                <form class="delete-form" method="post" onsubmit="return confirm('¿Eliminar este centro poblado?');">
+                                <form class="delete-form" method="post" onsubmit="return confirm('Eliminar este centro poblado?');">
                                     <input type="hidden" name="csrf_token" value="<?php echo e(csrf_token()); ?>">
                                     <input type="hidden" name="accion" value="eliminar">
                                     <input type="hidden" name="id" value="<?php echo e($row['id']); ?>">

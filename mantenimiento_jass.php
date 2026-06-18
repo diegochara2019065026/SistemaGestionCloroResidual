@@ -3,7 +3,7 @@ session_start();
 require 'conexion.php';
 require 'includes/helpers.php';
 
-require_login();
+require_admin();
 
 $error = '';
 $success = '';
