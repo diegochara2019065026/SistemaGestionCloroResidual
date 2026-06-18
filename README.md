@@ -398,7 +398,9 @@ Proyecto academico en desarrollo para la gestion de informacion relacionada con 
 ## Autor
 
 Diego Chara 
+
 Jhon Franklin Mamani Peñasco
+
 Soledad Maltrain Yañez
 
 Universidad Privada de Tacna - FAING EPIS
